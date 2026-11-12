@@ -11,6 +11,7 @@ import { logAudit } from "../lib/audit";
 import { formatDMY } from "../lib/date";
 import { ForbiddenError } from "../lib/auth/rbac";
 import { createApprovalLinkToken } from "../lib/auth/approvalLink";
+import { consumeCompOffsForRequest } from "./compOffService";
 
 function appBaseUrl(): string {
   return process.env.APP_BASE_URL ?? "http://localhost:3000";
@@ -288,6 +289,10 @@ export async function decideLeaveRequest(params: {
     prisma.leaveRequest.update({ where: { id: request.id }, data: { status: "APPROVED", decidedAt: new Date() } }),
   ]);
 
+  if (request.leaveType.code === "COMPOFF") {
+    await consumeCompOffsForRequest({ userId: request.userId, leaveRequestId: request.id, daysNeeded: Number(request.totalDays) });
+  }
+
   await notifyUser({
     userId: request.userId,
     subject: "Leave request approved",
@@ -328,6 +333,14 @@ export async function cancelLeaveRequest(params: { requestId: string; actorId: s
       },
     });
     await prisma.$transaction([reversal, statusUpdate]);
+
+    const leaveType = await prisma.leaveType.findUnique({ where: { id: request.leaveTypeId } });
+    if (leaveType?.code === "COMPOFF") {
+      await prisma.compOffCredit.updateMany({
+        where: { usedInRequestId: request.id },
+        data: { status: "AVAILABLE", usedInRequestId: null },
+      });
+    }
   } else {
     await statusUpdate;
   }
