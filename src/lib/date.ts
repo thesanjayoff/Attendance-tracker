@@ -23,6 +23,12 @@ export function startOfDayIST(date: Date): Date {
   return fromZonedTime(`${key} 00:00:00`, IST);
 }
 
+/** Midnight IST for a specific Y/M/D (IST calendar date), as a UTC instant. */
+export function istMidnightUTCForYMD(year: number, month: number, day: number): Date {
+  const utcMs = Date.UTC(year, month - 1, day, 0, 0, 0) - (5 * 60 + 30) * 60 * 1000;
+  return new Date(utcMs);
+}
+
 /** "Now", expressed as the IST wall-clock Date object (for day-of-week etc.). */
 export function nowInIST(): Date {
   return toZonedTime(new Date(), IST);

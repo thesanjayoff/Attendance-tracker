@@ -1,4 +1,4 @@
-import { dateKeyIST } from "../date";
+import { dateKeyIST, istMidnightUTCForYMD } from "../date";
 
 export type LeaveYearType = "CALENDAR" | "FINANCIAL";
 
@@ -14,12 +14,6 @@ function istYearMonth(date: Date): { year: number; month: number } {
   return { year: y, month: m };
 }
 
-function istMidnightUTC(year: number, month: number, day: number): Date {
-  // Fixed +05:30 offset, no DST in India — safe to compute directly.
-  const utcMs = Date.UTC(year, month - 1, day, 0, 0, 0) - (5 * 60 + 30) * 60 * 1000;
-  return new Date(utcMs);
-}
-
 /** Resolves the leave-year window (calendar or financial) containing `forDate`. */
 export function getLeaveYearBounds(
   leaveYearType: LeaveYearType,
@@ -31,8 +25,8 @@ export function getLeaveYearBounds(
   if (leaveYearType === "CALENDAR") {
     return {
       label: String(year),
-      startDate: istMidnightUTC(year, 1, 1),
-      endDate: istMidnightUTC(year, 12, 31),
+      startDate: istMidnightUTCForYMD(year, 1, 1),
+      endDate: istMidnightUTCForYMD(year, 12, 31),
     };
   }
 
@@ -44,8 +38,8 @@ export function getLeaveYearBounds(
 
   return {
     label: `${fyStartYear}-${fyEndYear}`,
-    startDate: istMidnightUTC(fyStartYear, financialYearStartMonth, 1),
-    endDate: istMidnightUTC(endYear, endMonth, lastDay),
+    startDate: istMidnightUTCForYMD(fyStartYear, financialYearStartMonth, 1),
+    endDate: istMidnightUTCForYMD(endYear, endMonth, lastDay),
   };
 }
 

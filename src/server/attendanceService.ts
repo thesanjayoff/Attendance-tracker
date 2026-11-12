@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "../lib/prisma";
-import { startOfDayIST, dateKeyIST } from "../lib/date";
+import { startOfDayIST, dateKeyIST, istMidnightUTCForYMD } from "../lib/date";
 import { getOrganization, getCalendarConfig } from "./org";
 import { classifyDay } from "../lib/rules/calendar";
 import { evaluateCheckIn, evaluateCheckOut, isWithinGeofence, minutesFromMidnightIST, shouldApplyLateMarkDeduction } from "../lib/rules/attendance";
@@ -87,7 +87,8 @@ export async function checkOut(params: { userId: string }) {
 
 async function maybeApplyLateMarkDeduction(userId: string, asOf: Date) {
   const org = await getOrganization();
-  const monthStart = new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), 1));
+  const [istYear, istMonth] = dateKeyIST(asOf).split("-").map(Number);
+  const monthStart = istMidnightUTCForYMD(istYear, istMonth, 1);
   const lateCount = await prisma.attendanceRecord.count({
     where: { userId, date: { gte: monthStart }, status: "LATE" },
   });
