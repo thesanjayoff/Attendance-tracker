@@ -10,6 +10,28 @@ import { notifyUser } from "../lib/notifications";
 import { logAudit } from "../lib/audit";
 import { formatDMY } from "../lib/date";
 import { ForbiddenError } from "../lib/auth/rbac";
+import { createApprovalLinkToken } from "../lib/auth/approvalLink";
+
+function appBaseUrl(): string {
+  return process.env.APP_BASE_URL ?? "http://localhost:3000";
+}
+
+/** Notifies an approver with both an in-app link and one-tap signed approve/reject links. */
+async function notifyApprover(params: { approverId: string; requestId: string; employeeName: string; subject: string; summary: string }) {
+  const [approveToken, rejectToken] = await Promise.all([
+    createApprovalLinkToken({ leaveRequestId: params.requestId, approverId: params.approverId, action: "APPROVE" }),
+    createApprovalLinkToken({ leaveRequestId: params.requestId, approverId: params.approverId, action: "REJECT" }),
+  ]);
+  const approveUrl = `${appBaseUrl()}/api/approve-link/${approveToken}`;
+  const rejectUrl = `${appBaseUrl()}/api/approve-link/${rejectToken}`;
+
+  await notifyUser({
+    userId: params.approverId,
+    subject: params.subject,
+    body: `${params.summary}\n\nApprove: ${approveUrl}\nReject: ${rejectUrl}\n\n(Links expire in 72 hours and can only be used once.)`,
+    link: `/approvals/${params.requestId}`,
+  });
+}
 
 const ACTIVE_STATUSES = ["PENDING", "PENDING_LEVEL_2", "APPROVED", "ESCALATED"] as const;
 
@@ -183,11 +205,12 @@ export async function createLeaveRequest(input: CreateLeaveRequestInput) {
   await logAudit({ actorId: input.userId, action: "LEAVE_REQUEST_CREATED", entityType: "LeaveRequest", entityId: request.id, metadata: { totalDays: preview.totalDays } });
 
   if (firstApproverId) {
-    await notifyUser({
-      userId: firstApproverId,
+    await notifyApprover({
+      approverId: firstApproverId,
+      requestId: request.id,
+      employeeName: user.name,
       subject: `${user.name} applied for leave`,
-      body: `${user.name} applied for ${preview.totalDays} day(s) leave from ${formatDMY(input.startDate)} to ${formatDMY(input.endDate)}.`,
-      link: `/approvals/${request.id}`,
+      summary: `${user.name} applied for ${preview.totalDays} day(s) leave from ${formatDMY(input.startDate)} to ${formatDMY(input.endDate)}.`,
     });
   }
 
@@ -236,11 +259,12 @@ export async function decideLeaveRequest(params: {
       where: { id: request.id },
       data: { status: "PENDING_LEVEL_2", currentApproverId: request.user.secondApproverId },
     });
-    await notifyUser({
-      userId: request.user.secondApproverId!,
+    await notifyApprover({
+      approverId: request.user.secondApproverId!,
+      requestId: request.id,
+      employeeName: request.user.name,
       subject: `${request.user.name}'s leave needs your approval`,
-      body: `${request.user.name}'s leave request for ${formatDMY(request.startDate)} to ${formatDMY(request.endDate)} needs second-level approval.`,
-      link: `/approvals/${request.id}`,
+      summary: `${request.user.name}'s leave request for ${formatDMY(request.startDate)} to ${formatDMY(request.endDate)} needs second-level approval.`,
     });
     await logAudit({ actorId: actor.id, action: "LEAVE_REQUEST_APPROVED_LEVEL_1", entityType: "LeaveRequest", entityId: request.id });
     return updated;
@@ -333,11 +357,12 @@ export async function autoEscalateStaleRequests() {
       prisma.leaveRequest.update({ where: { id: request.id }, data: { status: "ESCALATED", currentApproverId: escalateTo } }),
       prisma.approvalAction.create({ data: { leaveRequestId: request.id, actorId: null, action: "AUTO_ESCALATE" } }),
     ]);
-    await notifyUser({
-      userId: escalateTo,
+    await notifyApprover({
+      approverId: escalateTo,
+      requestId: request.id,
+      employeeName: request.user.name,
       subject: `Escalated: ${request.user.name}'s leave request`,
-      body: `No response after ${org.escalationHours}h — this leave request has been escalated to you.`,
-      link: `/approvals/${request.id}`,
+      summary: `No response after ${org.escalationHours}h — this leave request has been escalated to you.`,
     });
   }
 
