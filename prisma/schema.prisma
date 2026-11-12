@@ -1,0 +1,519 @@
+// Employee Leave & Attendance Tracker — core data model.
+// Self-hosted PostgreSQL. All timestamps stored in UTC; app layer renders in IST.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+
+enum Role {
+  EMPLOYEE
+  MANAGER
+  HR
+  OWNER
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  PROBATION
+  INACTIVE
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNSPECIFIED
+}
+
+enum LeaveYearType {
+  CALENDAR
+  FINANCIAL
+}
+
+enum AccrualMethod {
+  UPFRONT
+  MONTHLY
+  PER_DAY_WORKED
+}
+
+enum ApplicableGender {
+  ALL
+  MALE
+  FEMALE
+}
+
+enum HalfDayType {
+  NONE
+  FIRST_HALF
+  SECOND_HALF
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  PENDING_LEVEL_2
+  APPROVED
+  REJECTED
+  CANCELLED
+  ESCALATED
+}
+
+enum LedgerEntryType {
+  ACCRUAL
+  USAGE
+  REVERSAL
+  EXPIRY
+  CARRY_FORWARD
+  MANUAL_ADJUSTMENT
+  COMP_OFF_CREDIT
+  COMP_OFF_EXPIRY
+  PRO_RATION
+}
+
+enum CompOffStatus {
+  AVAILABLE
+  USED
+  EXPIRED
+}
+
+enum ApprovalActionType {
+  APPROVE
+  REJECT
+  ESCALATE
+  COMMENT
+  CANCEL
+  AUTO_ESCALATE
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  LATE
+  EARLY_EXIT
+  WFH
+  ON_LEAVE
+  HOLIDAY
+  WEEKLY_OFF
+  ON_DUTY
+}
+
+enum AttendanceSource {
+  WEB
+  IMPORT
+  BIOMETRIC
+  MANUAL
+}
+
+enum AttendanceRequestType {
+  WFH
+  ON_DUTY
+  REGULARIZATION
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  TELEGRAM
+  WHATSAPP
+}
+
+enum MonthLockStatus {
+  OPEN
+  LOCKED
+}
+
+// ---------- Organization-wide settings (singleton row, id = 1) ----------
+
+model Organization {
+  id                      Int           @id @default(1)
+  name                    String        @default("My Company")
+  timezone                String        @default("Asia/Kolkata")
+  leaveYearType           LeaveYearType @default(CALENDAR)
+  financialYearStartMonth Int           @default(4) // April
+  sandwichLeaveRule       Boolean       @default(false)
+  weeklyOffDays           Int[]         @default([0, 6]) // 0=Sun..6=Sat
+  defaultTeamCoverageMax  Int? // max people from same team off on same day; null = unlimited
+  teamCoverageEnforcement String        @default("WARN") // WARN | BLOCK
+  escalationHours         Int           @default(48)
+  backdatedLeaveLimitDays Int           @default(2)
+
+  shiftStartMinutes   Int @default(570) // 09:30 in minutes from midnight
+  shiftEndMinutes     Int @default(1110) // 18:30
+  graceMinutes        Int @default(10)
+  lateMarksForHalfDay Int @default(3)
+
+  geofenceEnabled      Boolean @default(false)
+  geofenceLat          Float?
+  geofenceLng          Float?
+  geofenceRadiusMeters Int?    @default(200)
+
+  notifyEmailEnabled    Boolean @default(false)
+  notifyTelegramEnabled Boolean @default(false)
+  notifyWhatsappEnabled Boolean @default(false)
+
+  birthdaysEnabled     Boolean @default(false)
+  anniversariesEnabled Boolean @default(false)
+
+  dataRetentionYears Int @default(7)
+
+  extra     Json?    @default("{}")
+  updatedAt DateTime @updatedAt
+}
+
+// ---------- Users / Employees ----------
+
+model User {
+  id             String         @id @default(cuid())
+  email          String         @unique
+  passwordHash   String
+  name           String
+  role           Role           @default(EMPLOYEE)
+  employeeCode   String?        @unique
+  department     String?
+  designation    String?
+  gender         Gender         @default(UNSPECIFIED)
+  dateOfBirth    DateTime?
+  dateOfJoining  DateTime
+  probationEndAt DateTime?
+  status         EmployeeStatus @default(ACTIVE)
+
+  managerId         String?
+  manager           User?   @relation("ManagerReports", fields: [managerId], references: [id])
+  reports           User[]  @relation("ManagerReports")
+  secondApproverId  String?
+  secondApprover    User?   @relation("SecondApproverReports", fields: [secondApproverId], references: [id])
+  secondApproverFor User[]  @relation("SecondApproverReports")
+  delegateId        String?
+  delegate          User?   @relation("DelegateReports", fields: [delegateId], references: [id])
+  delegateFor       User[]  @relation("DelegateReports")
+
+  mfaSecret  String?
+  mfaEnabled Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  leaveRequests      LeaveRequest[]      @relation("RequestOwner")
+  ledgerEntries      LeaveLedgerEntry[]  @relation("LedgerOwner")
+  ledgerActorEntries LeaveLedgerEntry[]  @relation("LedgerActor")
+  compOffs           CompOffCredit[]
+  attendanceRecords  AttendanceRecord[]
+  attendanceRequests AttendanceRequest[] @relation("AttendanceRequestOwner")
+  approvalActions    ApprovalAction[]    @relation("ApprovalActor")
+  auditLogs          AuditLog[]          @relation("AuditActor")
+  sessions           Session[]
+  loginAttempts      LoginAttempt[]
+  approvalLinkTokens ApprovalLinkToken[] @relation("ApprovalLinkApprover")
+  inAppNotifications InAppNotification[]
+  notificationLogs   NotificationLog[]
+  monthLockActions   MonthLock[]         @relation("MonthLockActor")
+}
+
+// ---------- Leave policy configuration ----------
+
+model LeaveType {
+  id                    String           @id @default(cuid())
+  name                  String
+  code                  String           @unique
+  accrualMethod         AccrualMethod    @default(UPFRONT)
+  yearlyQuotaDays       Decimal          @default(0) @db.Decimal(6, 2)
+  carryForwardLimitDays Decimal          @default(0) @db.Decimal(6, 2)
+  expiryMonthsAfterYear Int? // months after leave-year end that carried-forward balance expires
+  maxConsecutiveDays    Int?
+  minNoticeDays         Int              @default(0)
+  requiresDocAfterDays  Int? // e.g. medical certificate after N consecutive days
+  countWeekendsInRange  Boolean          @default(false)
+  countHolidaysInRange  Boolean          @default(false)
+  allowNegativeBalance  Boolean          @default(false)
+  negativeBalanceLimit  Decimal          @default(0) @db.Decimal(6, 2)
+  isPaid                Boolean          @default(true)
+  applicableGender      ApplicableGender @default(ALL)
+  availableDuringProbation Boolean       @default(true)
+  active                Boolean          @default(true)
+  sortOrder             Int              @default(0)
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  leaveRequests LeaveRequest[]
+  ledgerEntries LeaveLedgerEntry[]
+}
+
+model LeaveYear {
+  id        String   @id @default(cuid())
+  label     String   @unique // e.g. "2026" or "2026-2027"
+  startDate DateTime
+  endDate   DateTime
+
+  ledgerEntries LeaveLedgerEntry[]
+}
+
+model Holiday {
+  id         String   @id @default(cuid())
+  date       DateTime
+  name       String
+  location   String   @default("All") // e.g. "Tamil Nadu" or "All"
+  isOptional Boolean  @default(false)
+  year       Int
+
+  @@unique([date, name, location])
+}
+
+model BlackoutPeriod {
+  id          String   @id @default(cuid())
+  name        String
+  startDate   DateTime
+  endDate     DateTime
+  department  String? // null = applies to all
+  enforcement String   @default("WARN") // WARN | BLOCK
+  createdAt   DateTime @default(now())
+}
+
+// ---------- Leave requests & ledger ----------
+
+model LeaveRequest {
+  id                String             @id @default(cuid())
+  userId            String
+  user              User               @relation("RequestOwner", fields: [userId], references: [id])
+  leaveTypeId       String
+  leaveType         LeaveType          @relation(fields: [leaveTypeId], references: [id])
+  startDate         DateTime
+  endDate           DateTime
+  halfDayType       HalfDayType        @default(NONE)
+  isHourly          Boolean            @default(false)
+  startMinutes      Int? // minutes from midnight, for hourly permission
+  endMinutes        Int?
+  totalDays         Decimal            @db.Decimal(6, 2)
+  reason            String
+  documentUrl       String?
+  status            LeaveRequestStatus @default(PENDING)
+  currentApproverId String?
+  appliedAt         DateTime           @default(now())
+  decidedAt         DateTime?
+  cancelledAt       DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  ledgerEntries   LeaveLedgerEntry[]
+  approvalActions ApprovalAction[]
+  approvalLinks   ApprovalLinkToken[]
+  compOffUsed     CompOffCredit[]     @relation("CompOffUsedInRequest")
+
+  @@index([userId])
+  @@index([status])
+}
+
+model LeaveLedgerEntry {
+  id             String          @id @default(cuid())
+  userId         String
+  user           User            @relation("LedgerOwner", fields: [userId], references: [id])
+  leaveTypeId    String
+  leaveType      LeaveType       @relation(fields: [leaveTypeId], references: [id])
+  leaveYearId    String
+  leaveYear      LeaveYear       @relation(fields: [leaveYearId], references: [id])
+  date           DateTime        @default(now())
+  amount         Decimal         @db.Decimal(6, 2) // positive = credit, negative = debit
+  entryType      LedgerEntryType
+  note           String?
+  actorId        String
+  actor          User            @relation("LedgerActor", fields: [actorId], references: [id])
+  leaveRequestId String?
+  leaveRequest   LeaveRequest?   @relation(fields: [leaveRequestId], references: [id])
+  createdAt      DateTime        @default(now())
+
+  @@index([userId, leaveTypeId, leaveYearId])
+}
+
+model CompOffCredit {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  earnedDate      DateTime
+  expiryDate      DateTime
+  status          CompOffStatus @default(AVAILABLE)
+  usedInRequestId String?
+  usedInRequest   LeaveRequest? @relation("CompOffUsedInRequest", fields: [usedInRequestId], references: [id])
+  note            String?
+  createdAt       DateTime      @default(now())
+}
+
+model ApprovalAction {
+  id                  String             @id @default(cuid())
+  leaveRequestId      String?
+  leaveRequest        LeaveRequest?      @relation(fields: [leaveRequestId], references: [id])
+  attendanceRequestId String?
+  attendanceRequest   AttendanceRequest? @relation(fields: [attendanceRequestId], references: [id])
+  actorId             String
+  actor               User               @relation("ApprovalActor", fields: [actorId], references: [id])
+  action              ApprovalActionType
+  comment             String?
+  createdAt           DateTime           @default(now())
+}
+
+model ApprovalLinkToken {
+  id             String       @id @default(cuid())
+  tokenHash      String       @unique
+  leaveRequestId String
+  leaveRequest   LeaveRequest @relation(fields: [leaveRequestId], references: [id])
+  approverId     String
+  approver       User         @relation("ApprovalLinkApprover", fields: [approverId], references: [id])
+  action         String // APPROVE | REJECT
+  expiresAt      DateTime
+  usedAt         DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([leaveRequestId])
+}
+
+// ---------- Attendance ----------
+
+model AttendanceRecord {
+  id            String           @id @default(cuid())
+  userId        String
+  user          User             @relation(fields: [userId], references: [id])
+  date          DateTime // date-only, midnight IST stored as UTC instant
+  checkInAt     DateTime?
+  checkOutAt    DateTime?
+  checkInLat    Float?
+  checkInLng    Float?
+  status        AttendanceStatus @default(ABSENT)
+  workedMinutes Int?
+  lateMinutes   Int?             @default(0)
+  isRegularized Boolean          @default(false)
+  source        AttendanceSource @default(WEB)
+  note          String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([userId, date])
+  @@index([date])
+}
+
+model AttendanceRequest {
+  id                String                @id @default(cuid())
+  userId            String
+  user              User                  @relation("AttendanceRequestOwner", fields: [userId], references: [id])
+  type              AttendanceRequestType
+  date              DateTime
+  requestedCheckIn  DateTime?
+  requestedCheckOut DateTime?
+  reason            String
+  status            RequestStatus         @default(PENDING)
+  currentApproverId String?
+  decidedAt         DateTime?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  approvalActions ApprovalAction[]
+
+  @@index([userId])
+}
+
+// ---------- Monthly payroll lock ----------
+
+model MonthLock {
+  id         String          @id @default(cuid())
+  year       Int
+  month      Int // 1-12
+  status     MonthLockStatus @default(OPEN)
+  lockedById String?
+  lockedBy   User?           @relation("MonthLockActor", fields: [lockedById], references: [id])
+  lockedAt   DateTime?
+  note       String?
+
+  @@unique([year, month])
+}
+
+model MonthlyReportSnapshot {
+  id                String   @id @default(cuid())
+  year              Int
+  month             Int
+  userId            String
+  payableDays       Decimal  @db.Decimal(6, 2)
+  leaveByType       Json
+  lopDays           Decimal  @db.Decimal(6, 2)
+  overtimeMinutes   Int      @default(0)
+  lateDeductionDays Decimal  @default(0) @db.Decimal(6, 2)
+  generatedAt       DateTime @default(now())
+
+  @@unique([year, month, userId])
+}
+
+// ---------- Security & audit ----------
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  tokenHash String   @unique
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  email     String
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  ip        String?
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([ip, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation("AuditActor", fields: [actorId], references: [id])
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+}
+
+model InAppNotification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+model NotificationLog {
+  id        String              @id @default(cuid())
+  userId    String?
+  user      User?               @relation(fields: [userId], references: [id])
+  channel   NotificationChannel
+  subject   String?
+  body      String
+  status    String // SENT | FAILED | SKIPPED
+  error     String?
+  createdAt DateTime            @default(now())
+}
