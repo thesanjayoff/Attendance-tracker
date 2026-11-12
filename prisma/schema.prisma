@@ -155,6 +155,7 @@ model Organization {
   shiftEndMinutes     Int @default(1110) // 18:30
   graceMinutes        Int @default(10)
   lateMarksForHalfDay Int @default(3)
+  compOffExpiryDays  Int  @default(90)
 
   geofenceEnabled      Boolean @default(false)
   geofenceLat          Float?
@@ -201,8 +202,9 @@ model User {
   delegate          User?   @relation("DelegateReports", fields: [delegateId], references: [id])
   delegateFor       User[]  @relation("DelegateReports")
 
-  mfaSecret  String?
-  mfaEnabled Boolean @default(false)
+  mfaSecret      String?
+  mfaEnabled     Boolean @default(false)
+  telegramChatId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -356,8 +358,8 @@ model ApprovalAction {
   leaveRequest        LeaveRequest?      @relation(fields: [leaveRequestId], references: [id])
   attendanceRequestId String?
   attendanceRequest   AttendanceRequest? @relation(fields: [attendanceRequestId], references: [id])
-  actorId             String
-  actor               User               @relation("ApprovalActor", fields: [actorId], references: [id])
+  actorId             String? // null for system-generated actions (e.g. auto-escalation)
+  actor               User?              @relation("ApprovalActor", fields: [actorId], references: [id])
   action              ApprovalActionType
   comment             String?
   createdAt           DateTime           @default(now())
