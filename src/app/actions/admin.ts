@@ -8,7 +8,7 @@ import { hashPassword, checkPasswordPolicy } from "../../lib/auth/password";
 import { logAudit } from "../../lib/audit";
 import { runUpfrontAllocation, runMonthlyAccrual, runLeaveYearRollover, runCarryForwardExpiryCheck } from "../../server/accrualService";
 import { expireStaleCompOffs } from "../../server/compOffService";
-import { finalizeDailyAttendance } from "../../server/attendanceService";
+import { finalizeDailyAttendance, importAttendanceCsv, type AttendanceImportResult } from "../../server/attendanceService";
 import { lockMonth, reopenMonth, generateMonthlyReport } from "../../server/reportService";
 
 const HR_ROLES = ["HR", "OWNER"] as const;
@@ -170,4 +170,21 @@ export async function reopenMonthAction(year: number, month: number, reason: str
   const actor = await requireUser([...HR_ROLES]);
   await reopenMonth(year, month, actor.id, reason);
   revalidatePath("/reports");
+}
+
+export type ImportAttendanceCsvState = ({ ok: true } & AttendanceImportResult) | { ok: false; error: string };
+
+export async function importAttendanceCsvAction(
+  _prevState: ImportAttendanceCsvState | null,
+  formData: FormData
+): Promise<ImportAttendanceCsvState> {
+  const actor = await requireUser([...HR_ROLES]);
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, error: "Choose a CSV file to import." };
+  }
+  const csvText = await file.text();
+  const result = await importAttendanceCsv(csvText, actor.id);
+  revalidatePath("/admin/attendance-import");
+  return { ok: true, ...result };
 }

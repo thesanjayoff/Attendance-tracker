@@ -1,12 +1,15 @@
 import "server-only";
+import Papa from "papaparse";
 import { prisma } from "../lib/prisma";
-import { startOfDayIST, dateKeyIST, istMidnightUTCForYMD } from "../lib/date";
+import { startOfDayIST, dateKeyIST, istMidnightUTCForYMD, istDateTimeForYMDHM, parseDMY } from "../lib/date";
 import { getOrganization, getCalendarConfig } from "./org";
 import { classifyDay } from "../lib/rules/calendar";
 import { evaluateCheckIn, evaluateCheckOut, isWithinGeofence, minutesFromMidnightIST, shouldApplyLateMarkDeduction } from "../lib/rules/attendance";
 import { canApproveFor, ForbiddenError } from "../lib/auth/rbac";
 import { notifyUser } from "../lib/notifications";
 import { logAudit } from "../lib/audit";
+
+const IMPORTABLE_STATUSES = new Set(["PRESENT", "ABSENT", "HALF_DAY", "WFH", "ON_DUTY"]);
 
 export class GeofenceError extends Error {}
 
@@ -240,4 +243,125 @@ export async function finalizeDailyAttendance(date: Date) {
 
   await logAudit({ actorId: null, action: "ATTENDANCE_FINALIZED", entityType: "Date", entityId: dayKey, metadata: { created } });
   return created;
+}
+
+export interface AttendanceImportRowError {
+  row: number;
+  message: string;
+}
+
+export interface AttendanceImportResult {
+  imported: number;
+  errors: AttendanceImportRowError[];
+}
+
+/**
+ * Bulk-imports historical attendance from a CSV (e.g. exported from a
+ * biometric device or a legacy system). Expected header columns:
+ *   employeeCode, date (DD/MM/YYYY), status (optional), checkIn (HH:MM, optional), checkOut (HH:MM, optional)
+ * `status` must be one of PRESENT/ABSENT/HALF_DAY/WFH/ON_DUTY when given —
+ * ON_LEAVE/HOLIDAY/WEEKLY_OFF are derived elsewhere and are rejected here to
+ * avoid an import silently disagreeing with the leave ledger or calendar.
+ * Rows targeting an already-locked payroll month are rejected, not silently
+ * skipped, so the operator knows to reopen the month first if that is intended.
+ */
+export async function importAttendanceCsv(csvText: string, actorId: string): Promise<AttendanceImportResult> {
+  const parsed = Papa.parse<Record<string, string>>(csvText, { header: true, skipEmptyLines: true });
+  const errors: AttendanceImportRowError[] = [];
+  let imported = 0;
+
+  const employeesByCode = new Map((await prisma.user.findMany()).map((u) => [u.employeeCode, u]));
+  const lockedMonths = new Set(
+    (await prisma.monthLock.findMany({ where: { status: "LOCKED" } })).map((l) => `${l.year}-${l.month}`)
+  );
+  const org = await getOrganization();
+
+  for (let i = 0; i < parsed.data.length; i++) {
+    const row = parsed.data[i];
+    const rowNum = i + 2; // header is row 1
+    const employeeCode = (row.employeeCode ?? "").trim();
+    const employee = employeesByCode.get(employeeCode);
+    if (!employee) {
+      errors.push({ row: rowNum, message: `No employee found with code "${employeeCode}".` });
+      continue;
+    }
+
+    const date = parseDMY((row.date ?? "").trim());
+    if (!date) {
+      errors.push({ row: rowNum, message: `Invalid date "${row.date}" (expected DD/MM/YYYY).` });
+      continue;
+    }
+
+    const [istYear, istMonth] = dateKeyIST(date).split("-").map(Number);
+    if (lockedMonths.has(`${istYear}-${istMonth}`)) {
+      errors.push({ row: rowNum, message: `${row.date} falls in a locked payroll month — reopen it first.` });
+      continue;
+    }
+
+    const explicitStatus = (row.status ?? "").trim().toUpperCase();
+    if (explicitStatus && !IMPORTABLE_STATUSES.has(explicitStatus)) {
+      errors.push({ row: rowNum, message: `Status "${row.status}" is not importable (use PRESENT, ABSENT, HALF_DAY, WFH, or ON_DUTY).` });
+      continue;
+    }
+
+    let checkInAt: Date | undefined;
+    let checkOutAt: Date | undefined;
+    try {
+      checkInAt = parseHHMM(row.checkIn, date);
+      checkOutAt = parseHHMM(row.checkOut, date);
+    } catch {
+      errors.push({ row: rowNum, message: `Invalid time "${row.checkIn || row.checkOut}" (expected HH:MM, 24-hour).` });
+      continue;
+    }
+
+    const evalIn = checkInAt
+      ? evaluateCheckIn(minutesFromMidnightIST(checkInAt), { shiftStartMinutes: org.shiftStartMinutes, shiftEndMinutes: org.shiftEndMinutes, graceMinutes: org.graceMinutes })
+      : undefined;
+    const evalOut =
+      checkInAt && checkOutAt
+        ? evaluateCheckOut(minutesFromMidnightIST(checkInAt), minutesFromMidnightIST(checkOutAt), { shiftStartMinutes: org.shiftStartMinutes, shiftEndMinutes: org.shiftEndMinutes, graceMinutes: org.graceMinutes })
+        : undefined;
+
+    const status = explicitStatus || (evalIn?.isLate ? "LATE" : evalOut?.isEarlyExit ? "EARLY_EXIT" : checkInAt ? "PRESENT" : "ABSENT");
+
+    await prisma.attendanceRecord.upsert({
+      where: { userId_date: { userId: employee.id, date } },
+      update: {
+        checkInAt,
+        checkOutAt,
+        status: status as "PRESENT" | "ABSENT" | "HALF_DAY" | "WFH" | "ON_DUTY" | "LATE" | "EARLY_EXIT",
+        lateMinutes: evalIn?.lateMinutes ?? 0,
+        workedMinutes: evalOut?.workedMinutes,
+        isRegularized: true,
+        source: "IMPORT",
+      },
+      create: {
+        userId: employee.id,
+        date,
+        checkInAt,
+        checkOutAt,
+        status: status as "PRESENT" | "ABSENT" | "HALF_DAY" | "WFH" | "ON_DUTY" | "LATE" | "EARLY_EXIT",
+        lateMinutes: evalIn?.lateMinutes ?? 0,
+        workedMinutes: evalOut?.workedMinutes,
+        isRegularized: true,
+        source: "IMPORT",
+      },
+    });
+    imported += 1;
+  }
+
+  await logAudit({ actorId, action: "ATTENDANCE_IMPORTED", entityType: "System", metadata: { imported, errorCount: errors.length } });
+  return { imported, errors };
+}
+
+function parseHHMM(value: string | undefined, date: Date): Date | undefined {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return undefined;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+  if (!m) throw new Error("bad time");
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  if (hour > 23 || minute > 59) throw new Error("bad time");
+  const [year, month, day] = dateKeyIST(date).split("-").map(Number);
+  return istDateTimeForYMDHM(year, month, day, hour, minute);
 }

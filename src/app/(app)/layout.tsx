@@ -13,6 +13,7 @@ const HR_ITEMS: NavItem[] = [
   { href: "/admin/employees", label: "Employees", icon: "👥" },
   { href: "/admin/holidays", label: "Holidays", icon: "🎉" },
   { href: "/admin/leave-types", label: "Leave Types", icon: "🧾" },
+  { href: "/admin/attendance-import", label: "Import Attendance", icon: "📥" },
   { href: "/admin/settings", label: "Settings", icon: "⚙️" },
   { href: "/reports", label: "Reports", icon: "📊" },
 ];

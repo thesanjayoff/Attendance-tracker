@@ -29,6 +29,12 @@ export function istMidnightUTCForYMD(year: number, month: number, day: number): 
   return new Date(utcMs);
 }
 
+/** A specific wall-clock moment in IST (Y/M/D H:M), as the equivalent UTC instant. */
+export function istDateTimeForYMDHM(year: number, month: number, day: number, hour: number, minute: number): Date {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return fromZonedTime(`${year}-${pad(month)}-${pad(day)} ${pad(hour)}:${pad(minute)}:00`, IST);
+}
+
 /** "Now", expressed as the IST wall-clock Date object (for day-of-week etc.). */
 export function nowInIST(): Date {
   return toZonedTime(new Date(), IST);
