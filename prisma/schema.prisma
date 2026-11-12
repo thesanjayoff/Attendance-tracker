@@ -223,6 +223,7 @@ model User {
   inAppNotifications InAppNotification[]
   notificationLogs   NotificationLog[]
   monthLockActions   MonthLock[]         @relation("MonthLockActor")
+  monthlyReportSnapshots MonthlyReportSnapshot[]
 }
 
 // ---------- Leave policy configuration ----------
@@ -444,6 +445,7 @@ model MonthlyReportSnapshot {
   year              Int
   month             Int
   userId            String
+  user              User     @relation(fields: [userId], references: [id])
   payableDays       Decimal  @db.Decimal(6, 2)
   leaveByType       Json
   lopDays           Decimal  @db.Decimal(6, 2)
