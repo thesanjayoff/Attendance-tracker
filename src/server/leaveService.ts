@@ -51,6 +51,7 @@ export interface LeavePreviewInput {
   halfDayType: HalfDayType;
   excludeRequestId?: string;
   allowBackdatedOverride?: boolean;
+  documentUrl?: string;
 }
 
 export interface LeavePreviewResult {
@@ -156,7 +157,9 @@ export async function previewLeaveRequest(input: LeavePreviewInput): Promise<Lea
       negativeBalanceLimit: Number(leaveType.negativeBalanceLimit),
       applicableGender: leaveType.applicableGender,
       availableDuringProbation: leaveType.availableDuringProbation,
+      requiresDocAfterDays: leaveType.requiresDocAfterDays,
     },
+    hasDocument: Boolean(input.documentUrl),
     currentBalance: effectiveBalance,
     existingUserRequests: existingRequests,
     backdatedLimitDays: org.backdatedLeaveLimitDays,
@@ -176,7 +179,6 @@ export async function previewLeaveRequest(input: LeavePreviewInput): Promise<Lea
 
 export interface CreateLeaveRequestInput extends LeavePreviewInput {
   reason: string;
-  documentUrl?: string;
 }
 
 export async function createLeaveRequest(input: CreateLeaveRequestInput) {

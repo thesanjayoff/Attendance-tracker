@@ -13,6 +13,7 @@ export function ApplyLeaveForm({ leaveTypes }: { leaveTypes: { id: string; name:
   const [endDate, setEndDate] = useState("");
   const [halfDayType, setHalfDayType] = useState<"NONE" | "FIRST_HALF" | "SECOND_HALF">("NONE");
   const [reason, setReason] = useState("");
+  const [documentUrl, setDocumentUrl] = useState("");
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -26,11 +27,11 @@ export function ApplyLeaveForm({ leaveTypes }: { leaveTypes: { id: string; name:
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       startTransition(async () => {
-        const result = await previewLeaveAction({ leaveTypeId, startDate, endDate, halfDayType });
+        const result = await previewLeaveAction({ leaveTypeId, startDate, endDate, halfDayType, documentUrl });
         setPreview("totalDays" in result ? result : { ...result, totalDays: 0, sandwichExtraDays: 0, currentBalance: 0, balanceAfter: 0 });
       });
     }, 350);
-  }, [leaveTypeId, startDate, endDate, halfDayType]);
+  }, [leaveTypeId, startDate, endDate, halfDayType, documentUrl]);
 
   const isSingleDay = startDate && startDate === endDate;
 
@@ -78,6 +79,17 @@ export function ApplyLeaveForm({ leaveTypes }: { leaveTypes: { id: string; name:
 
       <Field label="Reason" htmlFor="reason">
         <Textarea id="reason" name="reason" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} required />
+      </Field>
+
+      <Field label="Supporting document link (optional)" htmlFor="documentUrl">
+        <Input
+          id="documentUrl"
+          name="documentUrl"
+          type="url"
+          placeholder="Link to a medical certificate, etc."
+          value={documentUrl}
+          onChange={(e) => setDocumentUrl(e.target.value)}
+        />
       </Field>
 
       {preview && (

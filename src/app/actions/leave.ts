@@ -26,6 +26,7 @@ export async function previewLeaveAction(input: {
   startDate: string;
   endDate: string;
   halfDayType: HalfDayType;
+  documentUrl?: string;
 }): Promise<PreviewState | { errors: { code: string; message: string }[]; warnings: never[] }> {
   const user = await requireUser();
   const startDate = parseDMY(input.startDate);
@@ -38,6 +39,7 @@ export async function previewLeaveAction(input: {
     leaveTypeId: input.leaveTypeId,
     startDate,
     endDate,
+    documentUrl: input.documentUrl,
     halfDayType: input.halfDayType,
   });
 }
@@ -49,13 +51,14 @@ export async function applyLeaveAction(_prevState: { error?: string; success?: b
   const leaveTypeId = String(formData.get("leaveTypeId") ?? "");
   const halfDayType = String(formData.get("halfDayType") ?? "NONE") as HalfDayType;
   const reason = String(formData.get("reason") ?? "").trim();
+  const documentUrl = String(formData.get("documentUrl") ?? "").trim() || undefined;
 
   if (!startDate || !endDate || !leaveTypeId || !reason) {
     return { error: "Please fill in all required fields." };
   }
 
   try {
-    await createLeaveRequest({ userId: user.id, leaveTypeId, startDate, endDate, halfDayType, reason });
+    await createLeaveRequest({ userId: user.id, leaveTypeId, startDate, endDate, halfDayType, reason, documentUrl });
   } catch (err) {
     if (err instanceof ValidationFailedError) {
       return { error: err.issues.map((i) => i.message).join(" ") };

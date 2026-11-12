@@ -130,6 +130,28 @@ describe("validateLeaveRequest", () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it("warns when a long request has no supporting document", () => {
+    const result = validateLeaveRequest(
+      baseInput({
+        requestedDays: 4,
+        leaveType: { ...baseInput().leaveType, requiresDocAfterDays: 2 },
+        hasDocument: false,
+      })
+    );
+    expect(result.warnings.map((w) => w.code)).toContain("DOCUMENT_REQUIRED");
+  });
+
+  it("does not warn about a document when one is attached", () => {
+    const result = validateLeaveRequest(
+      baseInput({
+        requestedDays: 4,
+        leaveType: { ...baseInput().leaveType, requiresDocAfterDays: 2 },
+        hasDocument: true,
+      })
+    );
+    expect(result.warnings.map((w) => w.code)).not.toContain("DOCUMENT_REQUIRED");
+  });
+
   it("blocks requests exceeding max consecutive days", () => {
     const result = validateLeaveRequest(
       baseInput({

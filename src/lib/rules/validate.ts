@@ -54,7 +54,9 @@ export interface LeaveRequestValidationInput {
     negativeBalanceLimit: number;
     applicableGender: ApplicableGender;
     availableDuringProbation: boolean;
+    requiresDocAfterDays?: number | null;
   };
+  hasDocument?: boolean;
   currentBalance: number;
   existingUserRequests: ExistingRequestRange[];
   backdatedLimitDays: number;
@@ -111,6 +113,13 @@ export function validateLeaveRequest(input: LeaveRequestValidationInput): Valida
     if (start.getTime() < earliestWithNotice.getTime()) {
       warnings.push({ code: "INSUFFICIENT_NOTICE", message: `This leave type usually requires ${input.leaveType.minNoticeDays} day(s) notice.` });
     }
+  }
+
+  if (input.leaveType.requiresDocAfterDays != null && input.requestedDays > input.leaveType.requiresDocAfterDays && !input.hasDocument) {
+    warnings.push({
+      code: "DOCUMENT_REQUIRED",
+      message: `A supporting document is usually required for this leave type beyond ${input.leaveType.requiresDocAfterDays} day(s).`,
+    });
   }
 
   if (input.leaveType.maxConsecutiveDays != null) {
