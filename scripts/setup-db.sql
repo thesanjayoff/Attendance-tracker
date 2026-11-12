@@ -5,8 +5,9 @@
 -- value must then go into DATABASE_URL in your local .env file, which is
 -- never committed to git).
 --
--- Example (PowerShell, from the PostgreSQL bin directory):
---   & "C:\Program Files\PostgreSQL\17\bin\psql.exe" -U postgres -h localhost -f scripts\setup-db.sql
+-- Example (PowerShell, from the PostgreSQL bin directory — check your
+-- actual port in postgresql.conf if it's not the default 5432):
+--   & "C:\Program Files\PostgreSQL\17\bin\psql.exe" -U postgres -h localhost -p 54329 -f scripts\setup-db.sql
 
 CREATE USER attendance_app WITH PASSWORD 'CHANGE_ME';
 CREATE DATABASE attendance_tracker OWNER attendance_app;
