@@ -25,7 +25,9 @@ export function NavShell({ items, userName, userRole, children }: { items: NavIt
         <div className="flex items-center gap-3">
           <div className="text-right text-sm">
             <div className="font-medium text-slate-900 dark:text-white">{userName}</div>
-            <div className="text-xs text-slate-500 dark:text-slate-400">{userRole}</div>
+            <Link href="/privacy" className="text-xs text-slate-500 hover:underline dark:text-slate-400">
+              {userRole} · My data
+            </Link>
           </div>
           <form action={logoutAction}>
             <button className="rounded-lg px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800" type="submit">

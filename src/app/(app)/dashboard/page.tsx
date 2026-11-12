@@ -5,8 +5,9 @@ import { getOrCreateLeaveYear } from "../../../server/leaveYear";
 import { computeBalanceFor } from "../../../lib/rules/balance";
 import { formatDMY, startOfDayIST } from "../../../lib/date";
 import { StatTile, Card, CardTitle } from "../../../components/ui/Card";
-import { StatusBadge } from "../../../components/ui/Badge";
+import { StatusBadge, Badge } from "../../../components/ui/Badge";
 import { Button } from "../../../components/ui/Button";
+import { getUnusualPatternFlags } from "../../../server/analytics";
 
 export default async function DashboardPage() {
   const user = await requireUser();
@@ -57,6 +58,8 @@ export default async function DashboardPage() {
     ]);
     orgStats = { totalEmployees, onLeaveToday, absentToday };
   }
+
+  const patternFlags = isHR ? await getUnusualPatternFlags() : [];
 
   return (
     <div className="space-y-6">
@@ -134,6 +137,29 @@ export default async function DashboardPage() {
           </Card>
         )}
       </div>
+
+      {isHR && patternFlags.length > 0 && (
+        <Card>
+          <CardTitle>Worth a look</CardTitle>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            Patterns over the last 90 days that may be worth a conversation — not a judgement, just a signal.
+          </p>
+          <div className="mt-3 space-y-3">
+            {patternFlags.map((p) => (
+              <div key={p.userId} className="border-b border-slate-100 pb-2 last:border-0 dark:border-slate-800">
+                <p className="text-sm font-medium text-slate-900 dark:text-white">{p.name}</p>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {p.flags.map((f) => (
+                    <Badge key={f.code} tone="warning">
+                      {f.message}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
