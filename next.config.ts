@@ -1,9 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  cacheComponents: true,
-  partialPrefetching: true,
+  // This app is entirely authenticated/dynamic (every page reads cookies()),
+  // so static prerendering/PPR has no upside here — disable Cache Components
+  // to use standard per-request dynamic rendering instead of requiring
+  // Suspense boundaries or "use cache" on every page.
   turbopack: {
     rules: {
       "*.css": {
